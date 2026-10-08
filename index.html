@@ -196,6 +196,22 @@
     .top { padding-block: 20px 14px; }
     .media, .media.three, .media.four { grid-template-columns: 1fr; }
   }
+
+  /* генератор спинтаксиса */
+  .gen-in { width: 100%; min-height: 170px; resize: vertical; background: var(--col); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 12px 14px; font: 13.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; box-sizing: border-box; }
+  .gen-in:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(232,80,2,.2); }
+  .gen-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 18px; }
+  .gen-bar .info { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+  .gen-out { background: var(--col); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-height: 56px; font-size: 15px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .gen-out strong { font-weight: 800; color: var(--white); }
+  .gen-out.empty { color: var(--gray); font-size: 13.5px; }
+  .gen-err { margin-top: 8px; font-size: 12.5px; color: var(--bad); }
+  .gen-help { margin-top: 18px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .gen-help h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .gen-help dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  .gen-help dt { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--ink); }
+  .gen-help dd { margin: 0; }
+  @media (max-width: 560px) { .gen-help dl { grid-template-columns: 1fr; } .gen-help dd { margin-bottom: 6px; } }
 </style>
 </head>
 <body>
@@ -1426,12 +1442,14 @@ ___________________
   const ICONS = {
     photo: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>',
     texts: '<path d="M4 6h16M4 12h16M4 18h10"/>',
-    prompts: '<path d="M5 7l5 5-5 5M12 18h7"/>'
+    prompts: '<path d="M5 7l5 5-5 5M12 18h7"/>',
+    gen: '<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/>'
   };
   const GROUPS = [
     { id: 'photo', title: 'Фотографии' },
     { id: 'texts', title: 'Заголовки и описания' },
-    { id: 'prompts', title: 'Промпты' }
+    { id: 'prompts', title: 'Промпты' },
+    { id: 'gen', title: 'Генератор' }
   ];
   const groupsEl = document.getElementById('groups');
   const titleEl = document.getElementById('pageTitle');
@@ -1468,17 +1486,122 @@ ___________________
     document.title = g.id === 'prompts' ? 'Промпты' : g.title + ' — Промпты';
   }
 
+  /* ------------------------- генератор ------------------------- */
+  // {а|б|в} — один случайный вариант, скобки можно вкладывать; **текст** — жирный; [[ART]] — артикул вида Q-1234
+  function spinParse(s) {
+    let pos = 0;
+    function seq(stop) {
+      const parts = []; let buf = '';
+      while (pos < s.length) {
+        const c = s[pos];
+        if (c === '{') { if (buf) { parts.push(buf); buf = ''; } pos++; parts.push(choice()); continue; }
+        if (stop.includes(c)) break;
+        buf += c; pos++;
+      }
+      if (buf) parts.push(buf);
+      return parts;
+    }
+    function choice() {
+      const opts = [];
+      for (;;) {
+        opts.push(seq('|}'));
+        if (s[pos] === '|') { pos++; continue; }
+        if (s[pos] === '}') { pos++; break; }
+        throw new Error('Не закрыта фигурная скобка «{»');
+      }
+      return { opts };
+    }
+    const top = seq('');
+    return top;
+  }
+  const spinGen = parts => parts.map(p => typeof p === 'string' ? p : spinGen(p.opts[Math.floor(Math.random() * p.opts.length)])).join('');
+  const spinCount = parts => parts.reduce((n, p) => n * (typeof p === 'string' ? 1 : p.opts.reduce((a, o) => a + spinCount(o), 0)), 1);
+  const randArt = () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)] + '-' + String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  const applyMacros = t => t.replace(/\[\[ART\]\]/g, randArt);
+  const escHtml = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const boldHtml = t => escHtml(t).replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>');
+  const plainText = t => t.replace(/\*\*([\s\S]+?)\*\*/g, '$1');
+  let genSrc = '';
+  try { genSrc = localStorage.getItem('spintax') || ''; } catch (e) {}
+
+  function showGen() {
+    curGroup = 'gen';
+    groupsEl.querySelectorAll('button').forEach(b => {
+      if (b.dataset.id === 'gen') b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    titleEl.textContent = 'Генератор';
+    subEl.textContent = 'Случайный вариант заголовка или описания из спинтаксиса';
+    tabsEl.hidden = true; tabsEl.replaceChildren();
+    try { history.replaceState(null, '', '#gen'); } catch (e) {}
+    document.title = 'Генератор — Промпты';
+
+    const input = el('textarea', { class: 'gen-in', id: 'genIn', spellcheck: 'false', 'aria-label': 'Спинтаксис',
+      placeholder: '{Дом под ключ 72 м². Ипотека 20 800 / мес|Дом под ключ 72 м² в ипотеку 6% через эскроу}\n\n**Жирный текст** и артикул [[ART]]' });
+    input.value = genSrc;
+    const out = el('div', { class: 'gen-out empty', id: 'genOut', 'aria-live': 'polite' }, 'Вставьте спинтаксис и нажмите «Сгенерировать»');
+    const err = el('div', { class: 'gen-err', hidden: '' });
+    const info = el('span', { class: 'info' });
+    let last = '';
+
+    const countInfo = () => {
+      try { const n = spinCount(spinParse(input.value)); info.textContent = input.value.trim() ? 'вариантов: ' + (n > 1e6 ? 'больше миллиона' : n.toLocaleString('ru-RU')) : ''; err.hidden = true; }
+      catch (e) { info.textContent = ''; err.textContent = e.message; err.hidden = false; }
+    };
+    const run = () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      try {
+        last = applyMacros(spinGen(spinParse(input.value)));
+        out.classList.remove('empty'); out.innerHTML = boldHtml(last); err.hidden = true;
+      } catch (e) { err.textContent = e.message; err.hidden = false; }
+    };
+    input.addEventListener('input', () => { genSrc = input.value; try { localStorage.setItem('spintax', genSrc); } catch (e) {} countInfo(); });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); } });
+
+    const genBtn = el('button', { class: 'copy', type: 'button', onclick: run }, 'Сгенерировать');
+    const copyBtn = el('button', { class: 'mini', type: 'button' }, 'Скопировать');
+    copyBtn.addEventListener('click', async () => {
+      if (!last) return;
+      const plain = plainText(last), html = boldHtml(last).replace(/\n/g, '<br>');
+      const flash = t => { copyBtn.textContent = t; copyBtn.classList.add('done'); setTimeout(() => { copyBtn.textContent = 'Скопировать'; copyBtn.classList.remove('done'); }, 1600); };
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([plain], { type: 'text/plain' }) })]);
+        flash('Скопировано ✓');
+      } catch (e) { copyText(plain, copyBtn); }
+    });
+    const htmlBtn = el('button', { class: 'mini', type: 'button', title: 'С тегами <strong> и <br> — для автозагрузки' }, 'Копировать HTML');
+    htmlBtn.addEventListener('click', () => { if (last) { copyText(boldHtml(last).replace(/\n/g, '<br>\n'), htmlBtn); setTimeout(() => { htmlBtn.textContent = 'Копировать HTML'; }, 1700); } });
+    const clearBtn = el('button', { class: 'mini', type: 'button', onclick: () => { input.value = ''; input.dispatchEvent(new Event('input')); out.textContent = 'Вставьте спинтаксис и нажмите «Сгенерировать»'; out.classList.add('empty'); last = ''; input.focus(); } }, 'Очистить');
+
+    const help = el('div', { class: 'gen-help' }, el('h3', {}, 'Как писать'));
+    const dl = el('dl');
+    [['{вариант 1|вариант 2|вариант 3}', 'берётся один случайный вариант; скобки можно вкладывать друг в друга'],
+     ['**текст**', 'жирный текст; в результате звёздочек нет, текст выделен'],
+     ['[[ART]]', 'артикул случайным образом, формат Q-1234'],
+     ['Ctrl + Enter', 'сгенерировать ещё раз, не убирая руки с клавиатуры']].forEach(([a, b]) => dl.append(el('dt', {}, a), el('dd', {}, b)));
+    help.append(dl);
+
+    listEl.replaceChildren(el('article', { class: 'card' },
+      el('div', { class: 'prompt-label' }, el('span', {}, 'Спинтаксис')),
+      input, err,
+      el('div', { class: 'gen-bar' }, genBtn, clearBtn, info),
+      el('div', { class: 'prompt-label' }, el('span', {}, 'Результат'), el('span', { class: 'acts' }, copyBtn, htmlBtn)),
+      out, help));
+    countInfo();
+    if (genSrc.trim()) run();
+  }
+
   GROUPS.forEach(g => {
     const total = SECTIONS.filter(s => s.group === g.id).reduce((n, s) => n + s.items.length, 0);
     const b = el('button', { type: 'button', class: 'sbtn', 'data-id': g.id,
-      onclick: () => show(SECTIONS.find(s => s.group === g.id).id) });
+      onclick: () => g.id === 'gen' ? showGen() : show(SECTIONS.find(s => s.group === g.id).id) });
     b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + ICONS[g.id] + '</svg>';
-    b.append(el('span', { class: 'lbl' }, g.title), el('span', { class: 'badge' }, String(total)));
+    b.append(el('span', { class: 'lbl' }, g.title));
+    if (g.id !== 'gen') b.append(el('span', { class: 'badge' }, String(total)));
     groupsEl.append(b);
   });
 
-  const start = SECTIONS.some(s => s.id === location.hash.slice(1)) ? location.hash.slice(1) : SECTIONS[0].id;
-  show(start);
+  if (location.hash === '#gen') showGen();
+  else show(SECTIONS.some(s => s.id === location.hash.slice(1)) ? location.hash.slice(1) : SECTIONS[0].id);
 </script>
 </body>
 </html>
